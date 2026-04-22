@@ -1,0 +1,76 @@
+---
+title: "Bayesian Linear Regression"
+author: "Hangting Lu"
+date: "2026-04-22"
+output: html_document
+---
+
+```{r}
+library(brms)      # The core Bayesian regression engine
+library(tidyverse) # For data cleaning (dplyr) and basic plotting (ggplot2)
+library(bayesplot) # For MCMC diagnostic plots
+library(tidybayes) # For extracting and plotting Bayesian uncertainty
+```
+
+```{r}
+dat <- na.omit(read.csv("data.csv"))
+dim(dat)
+```
+
+# Fitting
+
+```{r}
+# Define a weak prior (Optional but recommended for Bayesian rigor)
+# This tells the model: "Assume the effect of height and stems is normally distributed around 0, but allow it to be positive or negative based on data."
+prr <- c(prior(normal(0, 10), class = "b"))
+
+# Fit the Bayesian Linear Regression Model
+soybean_model <- brm(
+  formula = grain_yield ~ plant_height + number_of_stems,
+  data = dat,
+  family = gaussian(), # Assumes the target 'grain_yield' is continuous/normal
+  prior = prr,
+  chains = 4,          # Run 4 parallel simulations
+  iter = 2000,         # 2000 steps per simulation
+  warmup = 1000,       # Discard the first 1000 steps
+  seed = 123           # For exact reproducibility
+)
+```
+
+# Diagnostics
+
+```{r}
+# 1. Check R-hat values (Must be less than 1.05)
+summary(soybean_model)
+
+# 2. Check Trace Plots for "hairy caterpillar" mixing
+mcmc_trace(soybean_model)
+```
+
+# Posterior Predictive Check
+
+```{r}
+# Plot the actual yield data (dark line) against 50 simulated yield datasets (light lines)
+pp_check(soybean_model, ndraws = 50) +
+  labs(title = "Posterior Predictive Check: Soybean Yield",
+       subtitle = "Does the simulated data match the real data shape?")
+```
+
+# Visualization & Inference
+
+```{r}
+# 1. View the mathematical summaries and Credible Intervals
+summary(soybean_model)
+
+# 2. The Ultimate Visual: Conditional Effects
+# This plots the isolated effect of plant height on yield, complete with Bayesian uncertainty bands
+plot(conditional_effects(soybean_model), ask = FALSE)
+
+# 3. Ridge Plot (Advanced Visualization)
+# Shows the beautiful posterior distributions for your coefficients
+mcmc_areas(soybean_model, 
+           pars = c("b_plant_height", "b_number_of_stems"),
+           prob = 0.95) +
+  labs(title = "Posterior Distributions of Biological Predictors")
+```
+
