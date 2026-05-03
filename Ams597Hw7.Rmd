@@ -56,6 +56,68 @@ theta.hat - quantile(t.star, c(0.975, 0.025)) * se
 
 # 2
 ```{r}
+cvm.test <- function(x, y, B = 1000) {
+  n <- length(x)
+  m <- length(y)
+  
+  Fn.x <- ecdf(x)
+  Gm.y <- ecdf(y)
+  
+  W2 <- (m*n)/(m+n)^2*(sum((Fn.x(x)-Gm.y(x))^2)+sum((Fn.x(y)-Gm.y(y))^2))
+  
+  z <- c(x, y)
+  
+  stat.p <- rep(0, B)
+  
+  for (i in 1:B) {
+    z.p <- sample(z, n + m)
+    x.p <- z.p[1:n]
+    y.p <- z.p[(n + 1):(n + m)]
+    
+    Fn.xp <- ecdf(x.p)
+    Gm.yp <- ecdf(y.p)
 
+    stat.p[i] <- (m*n)/(m+n)^2*(sum((Fn.xp(x.p)-Gm.yp(x.p))^2)+sum((Fn.xp(y.p)-Gm.yp(y.p))^2))
+  }
+  
+  p.value <- (sum(stat.p >= W2) + 1)/(B + 1)
+  
+  return(list(
+    statistic = W2,
+    p.value = p.value
+  ))
+}
+```
+
+# 3
+```{r}
+spearman.permtest <- function(x, y, B = 1000) {
+  r <- cor(x, y, method = "spearman")
+  r.p <- rep(0, B)
+  
+  for (i in 1:B) {
+    y.p <- sample(y, length(y))
+    r.p[i] <- cor(x, y.p, method = "spearman")
+  }
+  
+  p.value <- (sum(abs(r.p) >= abs(r)) + 1) / (B + 1)
+  
+  return(list(
+    rho = r,
+    p.value = p.value
+  ))
+}
+```
+
+```{r}
+set.seed(123)
+x <- rnorm(50)
+y <- 0.2 * x + rnorm(50)
+
+spearman.permtest(x, y)
+```
+
+```{r}
+cor.test(x, y, method = "spearman")
 ```
 
