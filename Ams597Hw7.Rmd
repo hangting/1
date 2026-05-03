@@ -1,0 +1,61 @@
+---
+title: "Ams597Hw7"
+author: "Hangting Lu"
+date: "2026-05-03"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# 1.
+```{r}
+set.seed(123)
+x <- rnorm(50)
+B <- 1000
+n <- length(x)
+theta.hat <- median(x)
+x.grand <- matrix(sample(x, B * n, replace = TRUE), nrow = B)
+theta.grand <- mean(apply(x.grand, 1, median))
+```
+
+```{r}
+# bias
+bias <- theta.grand - median(x)
+```
+
+```{r}
+# standard error
+se <- sqrt(sum((apply(x.grand, 1, median)-theta.grand)^2)/(B-1))
+se
+```
+
+```{r}
+# standard normal bootstrap CI
+theta.hat - bias + c(-qnorm(0.975), qnorm(0.975)) * se
+```
+
+```{r}
+# basic bootstrap CI
+theta.b <- apply(x.grand, 1, median)
+2 * theta.hat - quantile(theta.b, c(0.975, 0.025))
+```
+
+```{r}
+# bootstrap t-interval at 95%
+se.b <- function(x) {
+  n <- length(x)
+  x.grand <- matrix(sample(x, B * n, replace = TRUE), nrow = B)
+  theta.b <- apply(x.grand, 1, median)
+  theta.grand <- mean(theta.b)
+  return(sqrt(sum((theta.b - theta.grand)^2) / (B - 1)))
+}
+t.b <- (theta.b - theta.hat) / apply(x.grand, 1, se.b)
+t.star <- sort(t.b)
+theta.hat - quantile(t.star, c(0.975, 0.025)) * se
+```
+
+# 2
+```{r}
+
+```
+
