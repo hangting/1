@@ -1,0 +1,21 @@
+Package: simpleEnsemble
+Type: Package
+Title: Simple Ensemble Learning Package
+Version: 0.1.0
+Author: Ensemble Algorithm contributors
+Description: An R package for a complete modeling workflow in low-dimensional and high-dimensional settings.
+License: GPL-3
+Encoding: UTF-8
+LazyData: true
+Depends:
+    R (>= 4.0.0)
+Imports:
+    glmnet,
+    randomForest,
+    pROC,
+    car
+Suggests:
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
+RoxygenNote: 7.3.3

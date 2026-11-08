@@ -1,0 +1,908 @@
+---
+title: "simpleEnsemble: Predictor Screening, Bagging, Ensemble Learning, and Model Evaluation"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{simpleEnsemble Vignette}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+library(simpleEnsemble)
+
+set.seed(123)
+```
+
+# Introduction
+
+The `simpleEnsemble` package implements a complete modeling workflow for
+continuous and binary response variables.
+
+The package is designed for both low-dimensional data and high-dimensional data,
+where the number of predictors can be larger than the sample size.
+
+The workflow includes:
+
+1. checking and preparing the input data;
+
+2. screening predictors for high-dimensional data;
+
+3. fitting single models, including linear, logistic, ridge, lasso regression, 
+and random forest;
+
+4. fitting bagging models;
+
+5. computing a naive variable importance score;
+
+6. fitting ensemble models;
+
+7. evaluating models by K-fold cross-validation.
+
+The package supports continuous, discrete, and binary predictors. The response
+variable can be continuous or binary.
+
+# Input Data
+
+The first step is to check the input data.
+
+```{r input-data-example}
+# example_data has continuous y
+# example_data2 has binary y
+
+data(example_data)
+
+dat_info <- input_data(example_data$X, example_data$y)
+
+names(dat_info)
+dat_info$y.type
+dat_info$x.type
+```
+
+The function `input_data()` checks whether X is a matrix or data frame and
+whether y is a valid response vector. It also checks missing values and makes
+sure that the number of rows of X matches the length of y.
+
+Continuous predictors are stored as numeric variables. Discrete and binary
+predictors are stored as factor variables.
+
+# Predictor Screening
+
+The next step is predictor screening.
+
+```{r screening-example}
+screen_fit <- screening(
+  X = example_data$X,
+  y = example_data$y,
+  K = 5,
+  vif.check = TRUE
+)
+
+screen_fit$X.name
+screen_fit$scores
+screen_fit$VIF
+```
+
+The function `screening()` is useful when the data are high-dimensional. It
+selects a smaller number of predictors before model fitting.
+
+# Screening Algorithm
+
+The function `screening()` is designed for high-dimensional data, where the
+number of predictors can be larger than the sample size. The goal is to select
+K useful predictors before model fitting.
+
+The screening algorithm has two parts. First, it computes a marginal association
+score between each predictor and the response. Second, if `vif.check = TRUE`, it
+controls correlation among selected predictors by using the variance inflation
+factor.
+
+For each predictor, the function chooses a test based on the predictor type and
+response type.
+
+1. If the predictor is continuous and the response is continuous, the function
+uses a correlation test.
+
+2. If the predictor is binary or discrete and the response is continuous, the
+function uses an ANOVA test.
+
+3. If the predictor is continuous and the response is binary, the function uses
+an ANOVA test.
+
+4. If the predictor is binary or discrete and the response is binary, the
+function uses a chi-square test. If the chi-square test is not appropriate, the
+function uses Fisher's exact test.
+
+The p-value from the test is converted to a score by
+
+$$
+\text{score} = -\log\text{(p-value)}
+$$
+
+A smaller p-value gives a larger score. Therefore, predictors with stronger
+marginal association with the response receive larger scores.
+
+After computing all scores, the function ranks predictors from the largest score
+to the smallest score. If `vif.check = FALSE`, the function directly keeps the
+top `K` predictors and does not compute VIF values.
+
+If `vif.check = TRUE`, the function adds predictors one by one. Each time a new
+predictor is considered, the function computes the VIF of the selected
+predictors. If the largest VIF is smaller than or equal to `vif.max`, the
+predictor is kept. Otherwise, the function skips that predictor and moves to the
+next one.
+
+The argument K controls the number of predictors to keep. If fewer than K
+predictors satisfy the VIF threshold, the function returns fewer predictors and
+gives a warning. If `K.full = TRUE`, the function still keeps K predictors by
+choosing the remaining predictors with the smallest VIF.
+
+The output contains the selected predictor data, selected predictor names,
+selected predictor indices, screening scores, predictor types, and VIF values.
+
+# Model Fitting
+
+After checking the data and screening predictors, the package can fit several
+single models:
+
+1. Linear regression,
+
+2. Logistic Regression,
+
+3. Ridge/Lasso Regression,
+
+4. Random Forest.
+
+Linear regression is used for continuous response variables.
+
+```{r linear-fit-example}
+set.seed(123)
+
+linear_model <- linear_fit(
+  X = screen_fit$X,
+  y = example_data$y
+)
+linear_model
+```
+
+Logistic regression is used for binary response variables.
+
+```{r logistic-fit-example}
+set.seed(123)
+
+screen_fit_binary <- screening(
+  X = example_data$X,
+  y = example_data$y_binary,
+  K = 5
+)
+
+logistic_model <- logistic_fit(
+  X = screen_fit_binary$X,
+  y = example_data$y_binary
+)
+logistic_model
+```
+
+Ridge regression and lasso regression can be used for continuous or binary
+response variables. Ridge regression uses `alpha = 0`, while lasso regression
+uses `alpha = 1`. The function `glmnet_fit()` returns the cross-validation
+result from `cv.glmnet()`. Therefore, `coef()` can be used to extract the
+estimated coefficients from the fitted model.
+
+```{r glmnet-fit-example}
+set.seed(123)
+
+ridge_model <- glmnet_fit(
+  X = example_data$X,
+  y = example_data$y,
+  alpha = 0,
+  nfolds = 5
+)
+
+lasso_model <- glmnet_fit(
+  X = example_data$X,
+  y = example_data$y,
+  alpha = 1,
+  nfolds = 5
+)
+ridge_model$lambda.min
+lasso_model$lambda.min
+coef(ridge_model, s = "lambda.min")
+coef(lasso_model, s = "lambda.min")
+```
+
+Random forest can also be used for continuous or binary response variables.
+The function `randomForest_fit` returns a fitted model object that shows the model type, number of 
+trees, number of variables tried at each split, mean squared residuals, 
+and percent variance explained.
+
+```{r random-forest-fit-example}
+set.seed(123)
+
+rf_model <- randomForest_fit(
+  X = example_data$X,
+  y = example_data$y,
+  ntree = 100
+)
+rf_model
+```
+
+For low-dimensional data, i.e. n > p, the original predictor matrix can be used directly,
+but `screening()` can also be used for preprocessing.
+For high-dimensional data, i.e. n $\le$ p, `screening()` should be used before fitting linear
+regression or logistic regression, because these two models require the sample
+size to be larger than the number of predictors.
+
+# Bagging, Variable Importance, and Ensemble Learning
+
+The package also includes bagging and ensemble learning.
+
+The function `bagging_fit()` first draws bootstrap samples with replacement. 
+Then it fits the selected model on each bootstrap sample. 
+It combines predictions from all bootstrap models.
+
+For continuous response variables, the final bagging prediction is averaged
+from the bootstrap model predictions.
+
+For binary response variables, the final bagging probability is the average of
+the bootstrap model predicted probabilities. The final class is assigned by
+using 0.5 as the cutoff.
+
+```{r bagging-fit-example}
+set.seed(123)
+
+bagging_model <- bagging_fit(
+  X = screen_fit$X,
+  y = example_data$y,
+  model = "ridge",
+  R = 50,
+  nfolds = 5
+)
+head(bagging_model$pred)
+```
+
+The package also computes a naive variable importance score from bagging. First,
+the predictors are converted to a numeric design matrix and scaled. Then the
+model is fitted on bootstrap samples, and coefficients are collected from all
+bootstrap models.
+
+The importance score is defined by
+
+$$
+\text{score} = \frac{|\text{mean bootstrap coefficient}|}{\text{bootstrap coefficient sd}}
+$$
+
+A larger score means the predictor has a larger and more stable effect on bootstrap samples.
+
+```{r bagging-score-example}
+set.seed(123)
+
+score_fit <- bagging_score(
+  X = screen_fit$X,
+  y = example_data$y,
+  model = "ridge",
+  R = 50,
+  nfolds = 5
+)
+score_fit$predictors
+score_fit$scores
+```
+
+The package also contains ensemble learning. The function `ensemble_fit()` fits
+multiple models on the same dataset. It stores the fitted models, model names,
+model weights, response type, and lambda choice.
+
+The ensemble prediction can be computed by a weighted average of model
+predictions. If `porp` is not specified, all selected models receive equal
+weights.
+
+For continuous response variables, the weighted average is the final prediction.
+For binary response variables, the weighted average is the final predicted
+probability.
+
+```{r ensemble-example}
+set.seed(123)
+
+ensemble_model <- ensemble_fit(
+  X = example_data$X,
+  y = example_data$y,
+  models = c("ridge", "lasso", "randomForest"),
+  nfolds = 5,
+  ntree = 100
+)
+ensemble_model$model.names
+ensemble_model$porp
+ensemble_model$y.type
+```
+
+In this example, `ensemble_model$model.names` shows the models used in the
+ensemble, and `ensemble_model$porp` shows the weights used to combine model
+predictions. Since `porp` is not specified, all models receive equal weights.
+
+In practice, bagging can reduce instability from one fitted model. Ensemble
+learning can improve prediction when different models capture different parts
+of the data pattern.
+
+# Model Evaluation
+
+The function `eval_fit()` evaluates a model by K-fold cross-validation.
+
+For continuous response variables, the function computes root mean square error,
+or RMSE.
+
+For binary response variables, the function computes area under the curve, or
+AUC.
+
+The available model choices are `"linear"`, `"logistic"`, `"ridge"`, `"lasso"`,
+`"randomForest"`, `"bagging"`, and `"ensemble"`.
+
+```{r evaluation-continuous-example}
+set.seed(123)
+
+eval_ridge <- eval_fit(
+  X = example_data$X,
+  y = example_data$y,
+  model = "ridge",
+  K = 5,
+  nfolds = 5
+)
+eval_ridge$model
+eval_ridge$K
+eval_ridge$metric
+eval_ridge$value
+```
+
+For binary response variables, each training fold must contain both response
+levels. This is necessary because binary models cannot be fitted if a training
+set contains only one class.
+
+```{r evaluation-binary-example}
+set.seed(123)
+
+screen_fit_binary <- screening(
+  X = example_data$X,
+  y = example_data$y_binary,
+  K = 5,
+  vif.check = TRUE
+)
+
+eval_logistic <- eval_fit(
+  X = screen_fit_binary$X,
+  y = example_data$y_binary,
+  model = "logistic",
+  K = 5
+)
+eval_logistic$model
+eval_logistic$K
+eval_logistic$metric
+eval_logistic$value
+```
+
+Bagging and ensemble models can also be evaluated by `eval_fit()`.
+
+For bagging, `eval_fit()` calls `bagging_fit()` inside each training fold. The
+argument `bagging.model` specifies the base model used in bagging.
+
+```{r evaluation-bagging-example}
+set.seed(123)
+
+eval_bagging <- eval_fit(
+  X = example_data$X,
+  y = example_data$y,
+  model = "bagging",
+  bagging.model = "ridge",
+  K = 5,
+  R = 50,
+  nfolds = 5
+)
+eval_bagging$model
+eval_bagging$K
+eval_bagging$metric
+eval_bagging$value
+```
+
+For ensemble learning, `eval_fit()` calls `ensemble_fit()` inside each training
+fold. The argument `ensemble.models` specifies which models are combined in the
+ensemble.
+
+```{r evaluation-ensemble-example}
+set.seed(123)
+
+eval_ensemble <- eval_fit(
+  X = example_data$X,
+  y = example_data$y,
+  model = "ensemble",
+  ensemble.models = c("ridge", "lasso", "randomForest"),
+  K = 5,
+  nfolds = 5,
+  ntree = 100
+)
+eval_ensemble$model
+eval_ensemble$K
+eval_ensemble$metric
+eval_ensemble$value
+```
+
+The output of `eval_fit()` includes the model name, the number of folds, the
+evaluation metric, and the metric value.
+
+For RMSE, smaller values indicate better prediction accuracy. For AUC, larger
+values indicate better classification performance. The numerical values here
+are based on the example data and are mainly used to demonstrate the package
+workflow.
+
+# Simulation Study
+
+This section uses simulation to study when screening, bagging, and ensemble
+learning are useful.
+
+The simulation changes three factors:
+
+1. sample size;
+
+2. number of predictors;
+
+3. signal strength.
+
+The response is continuous. Only the first few predictors are true signal
+predictors, and the remaining predictors are noise predictors.
+
+## Simulation Settings
+
+```{r simulation-settings}
+set.seed(123)
+
+n.set <- c(50, 100, 200)
+p.set <- c(20, 100, 500)
+signal.set <- c(0.5, 1, 2)
+sim_result <- data.frame()
+```
+
+## Function for Generating Simulated Data
+
+```{r simulation-data-function}
+generate_sim_data <- function(n, p, signal){
+  
+  X <- matrix(rnorm(n * p), nrow = n, ncol = p)
+  colnames(X) <- paste0("X", 1:p)
+  
+  beta <- rep(0, p)
+  beta[1:5] <- signal
+  
+  # For continuous response:
+  y <- as.numeric(X %*% beta + rnorm(n))
+  
+  # Binary response
+  # b <- as.numeric(X %*% beta)
+  # prob <- 1 / (1 + exp(-b))
+  # y <- factor(ifelse(runif(n) < prob, "Yes", "No"))
+  
+  return(list(
+    X = X,
+    y = y,
+    beta = beta
+  ))
+}
+```
+
+## Function for Evaluating One Simulation Setting
+
+```{r simulation-one-setting-function}
+sim1 <- function(n, p, signal){
+  
+  sim_dat <- generate_sim_data(n, p, signal)
+  
+  X <- sim_dat$X
+  y <- sim_dat$y
+  
+  K.screen <- min(20, p)
+  
+  screen_fit <- screening(
+    X = X,
+    y = y,
+    K = K.screen,
+    vif.check = TRUE,
+    K.full = TRUE
+  )
+  
+  # For continuous response:
+  # eval_fit() returns RMSE for continuous y.
+  
+  # lasso regression without screening
+  eval_lasso_raw <- eval_fit(
+    X = X,
+    y = y,
+    model = "lasso",
+    K = 5,
+    nfolds = 5
+  )
+  
+  # lasso regression after screening
+  eval_lasso_screen <- eval_fit(
+    X = screen_fit$X,
+    y = y,
+    model = "lasso",
+    K = 5,
+    nfolds = 5
+  )
+  
+  # bagging with ridge regression as the base model
+  eval_bagging <- eval_fit(
+    X = screen_fit$X,
+    y = y,
+    model = "bagging",
+    bagging.model = "ridge",
+    K = 5,
+    R = 30,
+    nfolds = 5
+  )
+  
+  # ensemble of ridge regression, lasso regression, and random forest
+  eval_ensemble <- eval_fit(
+    X = screen_fit$X,
+    y = y,
+    model = "ensemble",
+    ensemble.models = c("ridge", "lasso", "randomForest"),
+    K = 5,
+    nfolds = 5,
+    ntree = 100
+  )
+  
+  # For binary response:
+  # eval_fit() returns AUC for binary y.
+  # To avoid separation problems in high-dimensional binary settings, penalized
+  # models such as ridge and lasso are recommended.
+  #
+  # eval_lasso_raw <- eval_fit(
+  #   X = X,
+  #   y = y,
+  #   model = "lasso",
+  #   K = 5,
+  #   nfolds = 5
+  # )
+  #
+  # eval_lasso_screen <- eval_fit(
+  #   X = screen_fit$X,
+  #   y = y,
+  #   model = "lasso",
+  #   K = 5,
+  #   nfolds = 5
+  # )
+  #
+  # eval_bagging <- eval_fit(
+  #   X = screen_fit$X,
+  #   y = y,
+  #   model = "bagging",
+  #   bagging.model = "ridge",
+  #   K = 5,
+  #   R = 30,
+  #   nfolds = 5
+  # )
+  #
+  # eval_ensemble <- eval_fit(
+  #   X = screen_fit$X,
+  #   y = y,
+  #   model = "ensemble",
+  #   ensemble.models = c("ridge", "lasso", "randomForest"),
+  #   K = 5,
+  #   nfolds = 5,
+  #   ntree = 100
+  # )
+  
+  return(data.frame(
+    n = n,
+    p = p,
+    signal = signal,
+    lasso_raw = eval_lasso_raw$value,
+    lasso_screen = eval_lasso_screen$value,
+    bagging = eval_bagging$value,
+    ensemble = eval_ensemble$value
+  ))
+}
+```
+
+## Run the Simulation
+
+```{r simulation-run}
+set.seed(123)
+
+sim_result <- data.frame()
+
+for (n in n.set){
+  for (p in p.set){
+    for (signal in signal.set){
+      one_result <- sim1(
+        n = n,
+        p = p,
+        signal = signal
+      )
+      sim_result <- rbind(sim_result, one_result)
+    }
+  }
+}
+
+sim_result
+```
+
+## Compare Screening and No Screening
+
+This part compares lasso without screening and lasso after screening.
+
+```{r simulation-screening-comparison}
+# For continuous response, eval_fit() returns RMSE.
+# Smaller RMSE is better, so improvement is raw RMSE minus screened RMSE.
+sim_result$screening_improvement <- sim_result$lasso_raw - sim_result$lasso_screen
+
+# For binary response, eval_fit() returns AUC.
+# Larger AUC is better, so use screened AUC minus raw AUC instead.
+# sim_result$screening_improvement <- sim_result$lasso_screen - sim_result$lasso_raw
+
+sim_result[, c("n", "p", "signal", "lasso_raw",
+               "lasso_screen", "screening_improvement")]
+```
+
+A positive value of `screening_improvement` means that screening reduced RMSE.
+Therefore, screening helped in that simulation setting.
+
+From the screening comparison, screening tends to help more when the number of
+predictors is large. For example, when p = 500, the screening improvement is
+positive in all simulation settings. This means that screening removes many
+noise predictors and improves prediction before fitting lasso.
+
+When the number of predictors is small, such as p = 20, screening does not
+always help. In some settings, `screening_improvement` is negative, which means
+the screened lasso has larger RMSE than raw lasso. This can happen because when
+there are not many noise predictors, screening may remove useful information or
+introduce extra selection variability.
+
+Therefore, the simulation suggests that screening is most useful when `p` is
+large relative to `n`, especially when only a small number of predictors are true
+signal predictors.
+
+## Compare Bagging with Single Models
+
+This part compares bagging with screened lasso.
+
+```{r simulation-bagging-comparison}
+# For continuous response, eval_fit() returns RMSE.
+# Smaller RMSE is better, so improvement is screened lasso RMSE minus bagging RMSE.
+sim_result$bagging_improvement <- sim_result$lasso_screen - sim_result$bagging
+
+# For binary response, eval_fit() returns AUC.
+# Larger AUC is better, so use bagging AUC minus screened lasso AUC instead.
+# sim_result$bagging_improvement <- sim_result$bagging - sim_result$lasso_screen
+
+sim_result[, c("n", "p", "signal", "lasso_screen",
+               "bagging", "bagging_improvement")]
+```
+
+A positive value of `bagging_improvement` means that bagging reduced RMSE
+compared with screened lasso.
+
+From the bagging comparison, bagging improves prediction in some simulation
+settings, but the improvement is not consistent across all settings. In this
+simulation, bagging is more helpful in some smaller-sample or higher-dimensional
+settings, but it can also perform worse than screened lasso in other settings.
+
+This is reasonable because bagging mainly reduces instability. If the base model
+is already stable, or if the screened lasso model is already strong, averaging
+bootstrap models may not improve RMSE. Therefore, the simulation suggests that
+bagging is useful when the base model is not stable, but it does not guarantee
+better prediction for every dataset.
+
+## Compare Ensemble with Single Models
+
+This part compares ensemble learning with screened lasso and bagging.
+
+```{r simulation-ensemble-comparison}
+# For continuous response, eval_fit() returns RMSE.
+# Smaller RMSE is better, so improvement is single-model RMSE minus ensemble RMSE.
+sim_result$ensemble_vs_lasso <- sim_result$lasso_screen - sim_result$ensemble
+sim_result$ensemble_vs_bagging <- sim_result$bagging - sim_result$ensemble
+
+# For binary response, eval_fit() returns AUC.
+# Larger AUC is better, so use ensemble AUC minus single-model AUC instead.
+# sim_result$ensemble_vs_lasso <- sim_result$ensemble - sim_result$lasso_screen
+# sim_result$ensemble_vs_bagging <- sim_result$ensemble - sim_result$bagging
+
+sim_result[, c("n", "p", "signal", "lasso_screen", "bagging",
+               "ensemble", "ensemble_vs_lasso", "ensemble_vs_bagging")]
+```
+
+A positive value of `ensemble_vs_lasso` means that the ensemble reduced RMSE
+compared with screened lasso. A positive value of `ensemble_vs_bagging` means
+that the ensemble reduced RMSE compared with bagging.
+
+From the ensemble comparison, the ensemble improves prediction in some settings,
+but it does not consistently outperform screened lasso or bagging. In many
+settings, the ensemble has larger RMSE.
+
+This is reasonable because the simulated response is generated from a linear
+model. Ridge and lasso are already well matched to this data-generating
+mechanism. Adding random forest to the ensemble does not always improve
+prediction and can sometimes increase RMSE. Therefore, the ensemble is most
+useful when the selected models capture different useful patterns in the data,
+but it is not guaranteed to outperform every single model.
+
+## Simulation Summary
+
+The simulation results are compared by RMSE. A smaller RMSE means better
+prediction performance.
+
+Overall, the simulation shows that screening is most useful when the number of
+predictors is large. In particular, screening gives positive improvement in the
+settings with `p = 500`. This is expected because only the first few predictors
+are true signal predictors, while the remaining predictors are noise predictors.
+When `p` is large, screening can remove many noise predictors before model
+fitting.
+
+When the number of predictors is small, such as `p = 20`, screening does not
+consistently improve prediction. In these settings, there are fewer noise
+predictors, so lasso can already be fitted directly to the original predictor
+matrix. Screening may also remove useful predictors in some simulation runs.
+
+The bagging results are mixed. Bagging improves prediction in some settings, but
+it does not reduce RMSE in every setting. This is reasonable because bagging
+mainly reduces instability. In this simulation, bagging uses ridge regression as
+the base model, and ridge regression can already be stable. Therefore, averaging
+bootstrap ridge models does not always improve prediction.
+
+The ensemble results are also mixed. The ensemble improves prediction in some
+settings, but it does not consistently outperform screened lasso or bagging.
+This is reasonable because the simulated response is generated from a linear
+model. Ridge and lasso are already well matched to this data-generating
+mechanism. Adding random forest to the ensemble does not always help and can
+sometimes increase RMSE.
+
+Hence, the simulation suggests that screening is helpful for high-dimensional
+settings, bagging is useful when the base model is unstable, and ensemble
+learning is most useful when the selected models capture different useful
+patterns in the data.
+
+# Simulation Study: Binary Case
+
+```{r binary-simulation-data-function}
+generate_sim_data_binary <- function(n, p, signal){
+  
+  X <- matrix(rnorm(n * p), nrow = n, ncol = p)
+  colnames(X) <- paste0("X", 1:p)
+  
+  beta <- rep(0, p)
+  beta[1:5] <- signal
+  
+  b <- as.numeric(X %*% beta)
+  prob <- 1 / (1 + exp(-b))
+  y <- factor(ifelse(runif(n) < prob, "Yes", "No"))
+  
+  return(list(
+    X = X,
+    y = y,
+    beta = beta
+  ))
+}
+```
+
+```{r binary-simulation-one-setting-function}
+sim1_binary <- function(n, p, signal){
+  
+  sim_dat <- generate_sim_data_binary(n, p, signal)
+  
+  X <- sim_dat$X
+  y <- sim_dat$y
+  
+  K.screen <- min(20, p)
+  
+  screen_fit <- screening(
+    X = X,
+    y = y,
+    K = K.screen,
+    vif.check = TRUE,
+    K.full = TRUE
+  )
+  
+  eval_lasso_raw <- eval_fit(
+    X = X,
+    y = y,
+    model = "lasso",
+    K = 5,
+    nfolds = 5
+  )
+  
+  eval_lasso_screen <- eval_fit(
+    X = screen_fit$X,
+    y = y,
+    model = "lasso",
+    K = 5,
+    nfolds = 5
+  )
+  
+  eval_bagging <- eval_fit(
+    X = screen_fit$X,
+    y = y,
+    model = "bagging",
+    bagging.model = "ridge",
+    K = 5,
+    R = 30,
+    nfolds = 5
+  )
+  
+  eval_ensemble <- eval_fit(
+    X = screen_fit$X,
+    y = y,
+    model = "ensemble",
+    ensemble.models = c("ridge", "lasso", "randomForest"),
+    K = 5,
+    nfolds = 5,
+    ntree = 100
+  )
+  
+  return(data.frame(
+    n = n,
+    p = p,
+    signal = signal,
+    lasso_raw = eval_lasso_raw$value,
+    lasso_screen = eval_lasso_screen$value,
+    bagging = eval_bagging$value,
+    ensemble = eval_ensemble$value
+  ))
+}
+```
+
+```{r binary-simulation-run}
+set.seed(123)
+
+sim_result_binary <- data.frame()
+
+for (n in n.set){
+  for (p in p.set){
+    for (signal in signal.set){
+      one_result <- sim1_binary(
+        n = n,
+        p = p,
+        signal = signal
+      )
+      sim_result_binary <- rbind(sim_result_binary, one_result)
+    }
+  }
+}
+
+sim_result_binary
+```
+
+```{r binary-simulation-screening-comparison}
+sim_result_binary$screening_improvement <- 
+  sim_result_binary$lasso_screen - sim_result_binary$lasso_raw
+
+sim_result_binary[, c("n", "p", "signal", "lasso_raw",
+                      "lasso_screen", "screening_improvement")]
+```
+
+```{r binary-simulation-bagging-comparison}
+sim_result_binary$bagging_improvement <- 
+  sim_result_binary$bagging - sim_result_binary$lasso_screen
+
+sim_result_binary[, c("n", "p", "signal", "lasso_screen",
+                      "bagging", "bagging_improvement")]
+```
+
+```{r binary-simulation-ensemble-comparison}
+sim_result_binary$ensemble_vs_lasso <- 
+  sim_result_binary$ensemble - sim_result_binary$lasso_screen
+
+sim_result_binary$ensemble_vs_bagging <- 
+  sim_result_binary$ensemble - sim_result_binary$bagging
+
+sim_result_binary[, c("n", "p", "signal", "lasso_screen", "bagging",
+                      "ensemble", "ensemble_vs_lasso",
+                      "ensemble_vs_bagging")]
+```
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
